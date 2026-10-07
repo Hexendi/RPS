@@ -258,6 +258,45 @@ else
     printf '  skip -e negative test (host provides an opener)\n'
 fi
 
+# --- shell integration (rps.sh) -----------------------------------------
+section "shell integration: bash"
+out=$(bash -c 'source "$1"; rps -d "$2"; pwd' _ "$REPO/rps.sh" 'C:\Users\test\projects')
+eq "bash: rps -d cds into a directory" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/projects" "$out"
+out=$(bash -c 'source "$1"; rps -d "$2"; pwd' _ "$REPO/rps.sh" 'C:\Users\test\file.txt')
+eq "bash: rps -d on a file cds to its parent" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test" "$out"
+out=$(bash -c 'cd /; source "$1"; rps -b -d "$2"; pwd' _ "$REPO/rps.sh" 'C:\Users\test\projects')
+eq "bash: -d works even when not the first flag" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/projects" "$out"
+out=$(bash -c 'cd /; source "$1"; rps -d "$2" 2>/dev/null; echo "rc=$? pwd=$(pwd)"' \
+    _ "$REPO/rps.sh" 'C:\Users\test\nope')
+eq "bash: failed cd keeps the old directory" "rc=1 pwd=/" "$out"
+out=$(bash -c 'source "$1"; rps "$2"' _ "$REPO/rps.sh" 'C:\Users\test\file.txt')
+eq "bash: plain rps delegates to the executable" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" "$out"
+rc=0
+out=$(bash -c 'source "$1"; complete -p rps' _ "$REPO/rps.sh" 2>&1) || rc=$?
+eq "bash: completion registered" 0 "$rc"
+case "$out" in
+    *"-F _rps_complete_bash"*) ok "bash: completion uses _rps_complete_bash" ;;
+    *) bad "bash: completion uses _rps_complete_bash" "complete -p shows -F" "$out" ;;
+esac
+
+section "shell integration: zsh"
+out=$(zsh -c 'source "$1"; rps -d "$2"; pwd' _ "$REPO/rps.sh" 'C:\Users\test\projects')
+eq "zsh: rps -d cds into a directory" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/projects" "$out"
+out=$(zsh -c 'source "$1"; rps "$2"' _ "$REPO/rps.sh" 'C:\Users\test\file.txt')
+eq "zsh: plain rps delegates to the executable" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" "$out"
+rc=0
+out=$(zsh -c 'autoload -Uz compinit && compinit -D -u &&
+    source "$1" && print -r -- "${_comps[rps]:-unregistered}"' \
+    _ "$REPO/rps.sh" 2>&1) || rc=$?
+eq "zsh: sourcing with compinit succeeds" 0 "$rc"
+eq "zsh: completion registered" "_rps_complete_zsh" "$out"
+
 # --- error handling -----------------------------------------------------
 section "error handling"
 rc=0

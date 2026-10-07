@@ -25,6 +25,8 @@ Options:
     -d, --directory Print the folder to cd into: a directory stays as-is,
                     a file becomes its parent folder
     -r, --remove    Remove the file (asks for confirmation)
+    -c, --copy      Copy the converted path to the clipboard
+    -e, --explorer  Open the path in Windows Explorer
     -h, --help      Show this help
 
 With no PATH the current directory is used. With no options at all,
@@ -51,6 +53,45 @@ is_windows_path() {
         [A-Za-z]:[\\/]* | [A-Za-z]: | \\\\*) return 0 ;;
     esac
     return 1
+}
+
+# Convert according to the -u/-w/auto direction rule
+convert() {
+    case "$direction" in
+        wsl) to_wsl "$1" ;;
+        win) to_win "$1" ;;
+        *)
+            if is_windows_path "$1"; then
+                to_wsl "$1"
+            else
+                to_win "$1"
+            fi
+            ;;
+    esac
+}
+
+copy_to_clipboard() {
+    if command -v clip.exe >/dev/null 2>&1; then
+        printf '%s' "$1" | clip.exe
+    elif command -v xclip >/dev/null 2>&1; then
+        printf '%s' "$1" | xclip -selection clipboard
+    elif command -v xsel >/dev/null 2>&1; then
+        printf '%s' "$1" | xsel --clipboard --input
+    elif command -v wl-copy >/dev/null 2>&1; then
+        printf '%s' "$1" | wl-copy
+    else
+        die "no clipboard tool found (clip.exe, xclip, xsel or wl-copy)"
+    fi
+}
+
+open_in_explorer() {
+    if command -v explorer.exe >/dev/null 2>&1; then
+        explorer.exe "$1" >/dev/null 2>&1 || true
+    elif command -v wslview >/dev/null 2>&1; then
+        wslview "$1" >/dev/null 2>&1 || true
+    else
+        die "cannot open Windows Explorer (need explorer.exe or wslview)"
+    fi
 }
 
 to_wsl() {
@@ -86,6 +127,8 @@ while [ $# -gt 0 ]; do
         -b | --both) both=1 ;;
         -d | --directory) set_action dir ;;
         -r | --remove) set_action remove ;;
+        -c | --copy) set_action copy ;;
+        -e | --explorer) set_action explorer ;;
         --)
             shift
             break
@@ -131,6 +174,15 @@ wsl_target() {
     fi
 }
 
+# Path in Windows form (-e)
+win_target() {
+    if is_windows_path "$1"; then
+        wslpath -w "$1" 2>/dev/null || printf '%s\n' "$1"
+    else
+        to_win "$1"
+    fi
+}
+
 if [ -n "$action" ]; then
     case "$action" in
         dir)
@@ -152,6 +204,16 @@ if [ -n "$action" ]; then
                 printf 'removed: %s\n' "$target"
             fi
             ;;
+        copy)
+            result=$(convert "$path")
+            copy_to_clipboard "$result"
+            printf 'copied: %s\n' "$result"
+            ;;
+        explorer)
+            win=$(win_target "$path")
+            open_in_explorer "$win"
+            printf 'opened: %s\n' "$win"
+            ;;
     esac
     exit 0
 fi
@@ -169,16 +231,6 @@ if [ "$both" -eq 1 ]; then
     exit 0
 fi
 
-case "$direction" in
-    wsl) result=$(to_wsl "$path") ;;
-    win) result=$(to_win "$path") ;;
-    *)
-        if is_windows_path "$path"; then
-            result=$(to_wsl "$path")
-        else
-            result=$(to_win "$path")
-        fi
-        ;;
-esac
+result=$(convert "$path")
 
 printf '%s\n' "$result"

@@ -67,8 +67,36 @@ esac
 MOCK
 chmod +x "$MOCKBIN/wslpath"
 
+# --- fake clip.exe / explorer.exe ---------------------------------------
+cat >"$MOCKBIN/clip.exe" <<'MOCK'
+#!/usr/bin/env bash
+cat >"$RPS_TEST_CLIP"
+MOCK
+cat >"$MOCKBIN/explorer.exe" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >"$RPS_TEST_EXPLORER"
+MOCK
+chmod +x "$MOCKBIN/clip.exe" "$MOCKBIN/explorer.exe"
+
 ORIG_PATH=$PATH
 export PATH="$REPO:$MOCKBIN:$PATH"
+export RPS_TEST_CLIP="$SANDBOX/clip.out"
+export RPS_TEST_EXPLORER="$SANDBOX/explorer.out"
+
+# Does the host itself provide any of these tools? (for skip decisions)
+HAVE_CLIP=0
+HAVE_EXPLORER=0
+for t in clip.exe xclip xsel wl-copy; do
+    PATH="$ORIG_PATH" command -v "$t" >/dev/null 2>&1 && HAVE_CLIP=1
+done
+for t in explorer.exe wslview; do
+    PATH="$ORIG_PATH" command -v "$t" >/dev/null 2>&1 && HAVE_EXPLORER=1
+done
+
+# bin dir with wslpath but *no* clipboard/explorer tools, for negative tests
+NOEXT="$SANDBOX/bin_noext"
+mkdir -p "$NOEXT"
+cp "$MOCKBIN/wslpath" "$NOEXT/wslpath"
 
 # --- tiny test framework ------------------------------------------------
 PASS=0
@@ -172,6 +200,63 @@ case "$err" in
     *"no such file"*) ok "-r on a missing file explains" ;;
     *) bad "-r on a missing file explains" "mentions 'no such file'" "$err" ;;
 esac
+
+# --- -c: clipboard ------------------------------------------------------
+section "-c (copy)"
+: >"$RPS_TEST_CLIP"
+out=$(rps -c 'C:\Users\test\file.txt')
+eq "clip gets the converted wsl path" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" \
+    "$(cat "$RPS_TEST_CLIP")"
+case "$out" in
+    "copied: "*) ok "-c confirms on stdout" ;;
+    *) bad "-c confirms on stdout" "starts with 'copied:'" "$out" ;;
+esac
+
+: >"$RPS_TEST_CLIP"
+rps -c "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" >/dev/null
+eq "clip gets the windows path for wsl input" \
+    'C:\Users\test\file.txt' \
+    "$(cat "$RPS_TEST_CLIP")"
+
+# --- -e: Windows Explorer ----------------------------------------------
+section "-e (open in Explorer)"
+rps -e 'C:\Users\test\projects' >/dev/null
+eq "explorer gets windows path (windows input)" \
+    'C:\Users\test\projects' \
+    "$(cat "$RPS_TEST_EXPLORER")"
+out=$(rps -e "$RPS_TEST_ROOT/mnt/c/Users/test")
+eq "explorer gets windows path (wsl input)" \
+    'C:\Users\test' \
+    "$(cat "$RPS_TEST_EXPLORER")"
+case "$out" in
+    "opened: "*) ok "-e confirms on stdout" ;;
+    *) bad "-e confirms on stdout" "starts with 'opened:'" "$out" ;;
+esac
+
+# --- missing-helper negative tests (host-dependent, may skip) ----------
+if [ "$HAVE_CLIP" -eq 0 ]; then
+    rc=0
+    err=$(PATH="$REPO:$NOEXT:/usr/bin:/bin" rps -c 'C:\x' 2>&1 >/dev/null) || rc=$?
+    eq "-c without a clipboard tool exits 1" 1 "$rc"
+    case "$err" in
+        *"clipboard tool"*) ok "-c reports missing clipboard tool" ;;
+        *) bad "-c reports missing clipboard tool" "mentions clipboard tool" "$err" ;;
+    esac
+else
+    printf '  skip -c negative test (host provides a clipboard tool)\n'
+fi
+if [ "$HAVE_EXPLORER" -eq 0 ]; then
+    rc=0
+    err=$(PATH="$REPO:$NOEXT:/usr/bin:/bin" rps -e 'C:\x' 2>&1 >/dev/null) || rc=$?
+    eq "-e without explorer/wslview exits 1" 1 "$rc"
+    case "$err" in
+        *"Explorer"*) ok "-e reports missing opener" ;;
+        *) bad "-e reports missing opener" "mentions Explorer" "$err" ;;
+    esac
+else
+    printf '  skip -e negative test (host provides an opener)\n'
+fi
 
 # --- error handling -----------------------------------------------------
 section "error handling"

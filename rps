@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+#
+# rps — Windows <-> WSL path converter
+#
+# A thin wrapper around wslpath that picks the conversion direction for
+# you. See --help.
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+    rps [OPTIONS] [PATH]
+
+Convert a path between Windows and WSL formats. The direction is
+detected automatically:
+
+    rps "C:\Users\moussa\file.txt"   ->  /mnt/c/Users/moussa/file.txt
+    rps "/mnt/c/Users/moussa"        ->  C:\Users\moussa
+
+Options:
+    -u, --wsl       Force WSL format
+    -w, --win       Force Windows format
+    -b, --both      Print both formats (WSL first, Windows second)
+    -h, --help      Show this help
+
+With no PATH the current directory is used. With no options at all,
+'rps' prints both formats of the current directory.
+
+Flags must come before PATH; use '--' to end flag parsing.
+EOF
+}
+
+die() {
+    printf 'rps: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+is_windows_path() {
+    case "$1" in
+        [A-Za-z]:[\\/]* | [A-Za-z]: | \\\\*) return 0 ;;
+    esac
+    return 1
+}
+
+to_wsl() {
+    local out
+    if ! out=$(wslpath -u "$1" 2>&1); then
+        die "cannot convert '$1' to a WSL path: $out"
+    fi
+    printf '%s\n' "$out"
+}
+
+to_win() {
+    local out
+    if ! out=$(wslpath -w "$1" 2>&1); then
+        die "cannot convert '$1' to a Windows path: $out"
+    fi
+    printf '%s\n' "$out"
+}
+
+# ---------------------------------------------------------------- parsing
+both=0
+direction=auto
+argc=$#
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -u | --wsl) direction=wsl ;;
+        -w | --win) direction=win ;;
+        -b | --both) both=1 ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            usage >&2
+            die "unknown option: $1" 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+    shift
+done
+
+if [ $argc -eq 0 ]; then
+    both=1
+fi
+
+if [ $# -le 1 ]; then
+    :
+else
+    die "too many arguments (flags must come before PATH)" 2
+fi
+
+path=${1:-}
+if [ -n "$path" ]; then
+    path="${path/#\~/$HOME}"
+else
+    path=$(pwd)
+fi
+
+command -v wslpath >/dev/null 2>&1 ||
+    die "wslpath not found — rps must run inside WSL"
+
+# --------------------------------------------------------------- convert
+if [ "$both" -eq 1 ]; then
+    if is_windows_path "$path"; then
+        wsl=$(to_wsl "$path")
+        win=$(wslpath -w "$path" 2>/dev/null) || win=$path
+    else
+        wsl=$path
+        win=$(to_win "$path")
+    fi
+    printf '%s\n%s\n' "$wsl" "$win"
+    exit 0
+fi
+
+case "$direction" in
+    wsl) result=$(to_wsl "$path") ;;
+    win) result=$(to_win "$path") ;;
+    *)
+        if is_windows_path "$path"; then
+            result=$(to_wsl "$path")
+        else
+            result=$(to_win "$path")
+        fi
+        ;;
+esac
+
+printf '%s\n' "$result"

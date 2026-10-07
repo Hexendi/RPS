@@ -126,6 +126,53 @@ eq "-b on wsl path: wsl first, windows second" \
     "$RPS_TEST_ROOT/mnt/c"$'\n'C:'\' \
     "$(rps -b "$RPS_TEST_ROOT/mnt/c")"
 
+# --- -d: cd target -----------------------------------------------------
+section "-d (cd target)"
+eq "-d on a file gives its parent folder" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test" \
+    "$(rps -d 'C:\Users\test\file.txt')"
+eq "-d on a directory gives itself" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/projects" \
+    "$(rps -d 'C:\Users\test\projects')"
+eq "-d on a missing path gives the path as-is" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/nope" \
+    "$(rps -d 'C:\Users\test\nope')"
+eq "-d with no path gives cwd" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test" \
+    "$(cd "$RPS_TEST_ROOT/mnt/c/Users/test" && rps -d)"
+
+# --- -r: remove --------------------------------------------------------
+section "-r (remove)"
+printf 'x\n' >"$RPS_TEST_ROOT/mnt/c/Users/test/todelete.txt"
+rc=0
+out=$(printf 'y\n' | rps -r 'C:\Users\test\todelete.txt' 2>/dev/null) || rc=$?
+eq "-r with yes removes the file" 0 "$rc"
+if [ ! -e "$RPS_TEST_ROOT/mnt/c/Users/test/todelete.txt" ]; then
+    ok "-r actually deletes the file"
+else
+    bad "-r actually deletes the file" "file gone" "file still exists"
+fi
+case "$out" in
+    "removed: "*) ok "-r confirms on stdout" ;;
+    *) bad "-r confirms on stdout" "starts with 'removed:'" "$out" ;;
+esac
+
+printf 'keep\n' >"$RPS_TEST_ROOT/mnt/c/Users/test/keep.txt"
+printf 'n\n' | rps -r 'C:\Users\test\keep.txt' >/dev/null 2>&1
+if [ -e "$RPS_TEST_ROOT/mnt/c/Users/test/keep.txt" ]; then
+    ok "-r with no keeps the file"
+else
+    bad "-r with no keeps the file" "file exists" "file was deleted"
+fi
+
+rc=0
+err=$(rps -r 'C:\Users\test\missing.txt' 2>&1 >/dev/null) || rc=$?
+eq "-r on a missing file exits 1" 1 "$rc"
+case "$err" in
+    *"no such file"*) ok "-r on a missing file explains" ;;
+    *) bad "-r on a missing file explains" "mentions 'no such file'" "$err" ;;
+esac
+
 # --- error handling -----------------------------------------------------
 section "error handling"
 rc=0
@@ -137,6 +184,9 @@ eq "too many args exits 2" 2 "$rc"
 rc=0
 rps 'C:\nope' 'extra' >/dev/null 2>&1 || rc=$?
 eq "path + extra flag exits 2" 2 "$rc"
+rc=0
+rps -r -d 'C:\x' >/dev/null 2>&1 || rc=$?
+eq "conflicting actions exit 2" 2 "$rc"
 
 # Missing wslpath (only runnable where no real wslpath exists)
 REAL_WSLPATH=$(PATH="$ORIG_PATH" command -v wslpath 2>/dev/null || true)

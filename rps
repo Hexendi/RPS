@@ -22,6 +22,9 @@ Options:
     -u, --wsl       Force WSL format
     -w, --win       Force Windows format
     -b, --both      Print both formats (WSL first, Windows second)
+    -d, --directory Print the folder to cd into: a directory stays as-is,
+                    a file becomes its parent folder
+    -r, --remove    Remove the file (asks for confirmation)
     -h, --help      Show this help
 
 With no PATH the current directory is used. With no options at all,
@@ -34,6 +37,13 @@ EOF
 die() {
     printf 'rps: %s\n' "$1" >&2
     exit "${2:-1}"
+}
+
+set_action() {
+    if [ -n "$action" ] && [ "$action" != "$1" ]; then
+        die "conflicting actions: use only one of -d/-r/-c/-e" 2
+    fi
+    action=$1
 }
 
 is_windows_path() {
@@ -62,6 +72,7 @@ to_win() {
 # ---------------------------------------------------------------- parsing
 both=0
 direction=auto
+action=""
 argc=$#
 
 while [ $# -gt 0 ]; do
@@ -73,6 +84,8 @@ while [ $# -gt 0 ]; do
         -u | --wsl) direction=wsl ;;
         -w | --win) direction=win ;;
         -b | --both) both=1 ;;
+        -d | --directory) set_action dir ;;
+        -r | --remove) set_action remove ;;
         --)
             shift
             break
@@ -107,6 +120,41 @@ fi
 
 command -v wslpath >/dev/null 2>&1 ||
     die "wslpath not found — rps must run inside WSL"
+
+# --------------------------------------------------------------- actions
+# Path in WSL form, for filesystem operations (-d, -r)
+wsl_target() {
+    if is_windows_path "$1"; then
+        to_wsl "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+if [ -n "$action" ]; then
+    case "$action" in
+        dir)
+            target=$(wsl_target "$path")
+            if [ -d "$target" ]; then
+                :
+            elif [ -e "$target" ]; then
+                target=$(dirname -- "$target")
+            fi
+            printf '%s\n' "$target"
+            ;;
+        remove)
+            target=$(wsl_target "$path")
+            if [ ! -e "$target" ]; then
+                die "no such file: $target"
+            fi
+            rm -i -- "$target"
+            if [ ! -e "$target" ]; then
+                printf 'removed: %s\n' "$target"
+            fi
+            ;;
+    esac
+    exit 0
+fi
 
 # --------------------------------------------------------------- convert
 if [ "$both" -eq 1 ]; then

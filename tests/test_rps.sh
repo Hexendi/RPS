@@ -297,6 +297,73 @@ out=$(zsh -c 'autoload -Uz compinit && compinit -D -u &&
 eq "zsh: sourcing with compinit succeeds" 0 "$rc"
 eq "zsh: completion registered" "_rps_complete_zsh" "$out"
 
+# --- install.sh ---------------------------------------------------------
+section "install.sh"
+FAKEHOME="$SANDBOX/home"
+mkdir -p "$FAKEHOME"
+printf 'export FOO=1\n' >"$FAKEHOME/.bashrc"
+
+rc=0
+out=$(HOME="$FAKEHOME" SHELL=/usr/bin/bash "$REPO/install.sh") || rc=$?
+eq "install exits 0" 0 "$rc"
+if [ -x "$FAKEHOME/.local/bin/rps" ]; then
+    ok "install puts rps in ~/.local/bin"
+else
+    bad "install puts rps in ~/.local/bin" "executable present" "missing"
+fi
+if [ -f "$FAKEHOME/.config/rps/rps.sh" ]; then
+    ok "install puts rps.sh in ~/.config/rps"
+else
+    bad "install puts rps.sh in ~/.config/rps" "file present" "missing"
+fi
+count=$(grep -c '# >>> RPS TOOL >>>' "$FAKEHOME/.bashrc")
+eq "hook added to .bashrc" 1 "$count"
+
+HOME="$FAKEHOME" SHELL=/usr/bin/bash "$REPO/install.sh" >/dev/null
+count=$(grep -c '# >>> RPS TOOL >>>' "$FAKEHOME/.bashrc")
+eq "reinstall stays idempotent (still one hook)" 1 "$count"
+
+out=$(HOME="$FAKEHOME" bash -c '. "$HOME/.bashrc"; rps "C:\Users\test\file.txt"')
+eq "installed rps converts paths" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" "$out"
+out=$(HOME="$FAKEHOME" bash -c '. "$HOME/.bashrc"; rps -d "C:\Users\test\projects"; pwd')
+eq "installed rps -d cds" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/projects" "$out"
+
+# zsh login shell with no rc file yet
+FAKEHOME_ZSH="$SANDBOX/home-zsh"
+mkdir -p "$FAKEHOME_ZSH"
+HOME="$FAKEHOME_ZSH" SHELL=/usr/bin/zsh "$REPO/install.sh" >/dev/null
+if [ -f "$FAKEHOME_ZSH/.zshrc" ]; then
+    ok "zsh shell creates .zshrc hook"
+else
+    bad "zsh shell creates .zshrc hook" ".zshrc with hook" "missing"
+fi
+rc=0
+out=$(HOME="$FAKEHOME_ZSH" zsh -c '. "$HOME/.zshrc"; rps "C:\Users\test\file.txt"') || rc=$?
+eq "installed rps works in zsh" 0 "$rc"
+eq "installed rps converts paths in zsh" \
+    "$RPS_TEST_ROOT/mnt/c/Users/test/file.txt" "$out"
+
+# uninstall
+HOME="$FAKEHOME" SHELL=/usr/bin/bash "$REPO/install.sh" --uninstall >/dev/null
+count=$(grep -c '# >>> RPS TOOL >>>' "$FAKEHOME/.bashrc" || true)
+eq "uninstall removes the hook" 0 "$count"
+if [ ! -e "$FAKEHOME/.local/bin/rps" ] && [ ! -e "$FAKEHOME/.config/rps/rps.sh" ]; then
+    ok "uninstall removes installed files"
+else
+    bad "uninstall removes installed files" "both files gone" "still present"
+fi
+if grep -q 'export FOO=1' "$FAKEHOME/.bashrc"; then
+    ok "uninstall keeps the rest of .bashrc"
+else
+    bad "uninstall keeps the rest of .bashrc" "FOO=1 still there" "content lost"
+fi
+
+rc=0
+HOME="$FAKEHOME" "$REPO/install.sh" --bogus >/dev/null 2>&1 || rc=$?
+eq "unknown install option exits 2" 2 "$rc"
+
 # --- error handling -----------------------------------------------------
 section "error handling"
 rc=0
